@@ -1,0 +1,85 @@
+syntax = "proto3";
+
+package chatterbox;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = ".;chatterbox";
+
+service Chatterbox {
+  rpc Stream(stream Request) returns (stream Response) {}
+}
+
+message Request {
+  oneof event {
+    Join client_join = 1;
+    Message client_message = 2;
+    Part client_part = 3;
+    Ping client_ping = 4;
+  }
+
+  message Join {
+    string topic = 1;
+  }
+
+  message Message {
+    string text = 1;
+  }
+
+  message Part {
+    string topic = 1;
+  }
+
+  message Ping {
+    google.protobuf.Timestamp timestamp = 1;
+  }
+}
+
+message Response {
+  google.protobuf.Timestamp timestamp = 1;
+
+  oneof event {
+    Login client_login = 2;
+    Logout client_logout = 3;
+    Message client_message = 4;
+    Join client_join = 5;
+    Part client_part = 6;
+    Pong client_pong = 7;
+  }
+
+  message Join {
+    string topic = 1;
+    string nick = 2;
+  }
+
+  message Part {
+    string topic = 1;
+    string nick = 2;
+  }
+
+  message Login {
+    string nick = 1;
+  }
+
+  message Logout {
+    string nick = 1;
+  }
+
+  message Message {
+    string topic = 1;
+    string nick = 2;
+    string text = 3;
+  }
+
+  message Pong {
+    google.protobuf.Timestamp sentAt = 1;
+    google.protobuf.Timestamp receivedAt = 2;
+  }
+}
+
+message Session {
+  string token = 1;
+}
+
+
+
