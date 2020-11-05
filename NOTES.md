@@ -5,3 +5,4 @@ https://github.com/grpc/grpc-go/blob/master/examples/route_guide/routeguide/rout
 https://stackoverflow.com/questions/21362950/getting-a-slice-of-keys-from-a-map
 https://github.com/rodaine/grpc-chat/blob/master/server.go  
 https://github.com/rodaine/grpc-chat/
+https://play.golang.org/p/WO4YvtD8LuK

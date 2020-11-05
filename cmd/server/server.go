@@ -20,6 +20,14 @@ type server struct {
 	// create a one-to-one map of the client ID to the channel
 	Clients map[string]chan *chatterbox.Response
 
+	// specifies how many goroutines are used for broadcasting events out to clients subscribed to a topic.
+	// the size specifies how many active goroutines are used at a given time until all clients have been
+	// updated.
+	broadcastChunkSize int
+
+	// specifies what size the buffer will be for the clients broadcasting channel
+	broadcastBufferSize int
+
 	topicsMu, clientsMu sync.RWMutex
 }
 
@@ -29,6 +37,8 @@ func NewServer(host, password string) *server {
 		Password: password,
 		Topics: make(map[string]map[string]struct{}),
 		Clients: make(map[string]chan *chatterbox.Response),
+		broadcastChunkSize: 10,
+		broadcastBufferSize: 1000,
 	}
 
 	// the server topic always exists
@@ -42,30 +52,30 @@ func (s *server) logf(format string, args ...interface{}) {
 }
 
 func (s *server) Stream(stream chatterbox.Chatterbox_StreamServer) error {
-	var clientID string
+	var nickname string
 
-	// extract the client ID from the metadata
+	// extract the client nickname from the metadata
 	md, ok := metadata.FromIncomingContext(stream.Context())
 	if !ok {
 		// TODO error
 	} else {
-		res := md.Get(chatterbox.MetaDataClientId)
-		if len(res) == 0 || len(res[0]) == 0{
+		res := md.Get(chatterbox.MetaDataNickname)
+		if len(res) == 0 || len(res[0]) == 0 {
 			// TODO error
 		}
-		clientID = res[0]
+		nickname = res[0]
 	}
 
-	// check if the client already has a channel, if not create it and force the client to join the server topic
+	// check if the client already has a server topic subscription, if not create it and force the client to join the
+	// topic
 	s.clientsMu.Lock()
-	if ch, ok := s.Clients[clientID]; !ok {
+	if ch, ok := s.Clients[nickname]; !ok {
 		// create the channel for the client to broadcast messages to
-		// TODO make the buffer size variable
-		s.Clients[clientID] = make(chan *chatterbox.Response, 1000)
+		s.Clients[nickname] = make(chan *chatterbox.Response, s.broadcastBufferSize)
 
 		// force the client to join the "server" topic
 		s.topicsMu.Lock()
-		s.Topics[ServerTopic][clientID] = struct{}{}
+		s.Topics[ServerTopic][nickname] = struct{}{}
 		s.topicsMu.Unlock()
 
 		// start the client broadcaster
@@ -78,7 +88,7 @@ func (s *server) Stream(stream chatterbox.Chatterbox_StreamServer) error {
 			}
 		}(ch)
 	} else {
-		// TODO this client already exists, are they trying to shadow another clientID???
+		// TODO this client already exists, are they trying to shadow another nickname???
 	}
 	s.clientsMu.Unlock()
 
@@ -96,56 +106,10 @@ func (s *server) Stream(stream chatterbox.Chatterbox_StreamServer) error {
 				} else {
 					switch {
 					case req.GetClientJoin() != nil:
-						join := req.GetClientJoin()
-						if len(join.Topic) == 0 {
-							// TODO return proper gRPC error
-							return nil
+						if err := s.onClientJoin(req, nickname); err != nil {
+							s.logf("client failed to join topic: %s", err)
+							continue
 						}
-
-						// add client to topic
-						s.topicsMu.Lock()
-						if _, ok := s.Topics[join.Topic]; !ok {
-							// the requested topic does not exist, so create it and add the user
-							s.Topics[join.Topic] = make(map[string]struct{})
-						} else {
-							// the topic exists add the client to the list of joined clients for the topic
-							s.Topics[join.Topic][clientID] = struct{}{}
-						}
-						s.topicsMu.Unlock()
-
-						var wg sync.WaitGroup
-
-						// notify all other clients that user joined topic
-						s.topicsMu.RLock()
-						for client := range s.Topics[join.Topic] {
-							// grab the channel for the client, if it doesn't exist skip it.
-							// it may not exist by the time we get here if the client sent a part/quit event.
-							s.clientsMu.RLock()
-							ch, ok := s.Clients[client]
-							if !ok {
-								continue
-							}
-							s.clientsMu.RUnlock()
-
-							// create a message writer for each of the channels
-							wg.Add(1)
-							// lock the clients because we'll be writing to them.
-							go func(topic, clientID string, ch chan *chatterbox.Response) {
-								defer wg.Done()
-								ch <-&chatterbox.Response{
-									Event: &chatterbox.Response_ClientJoin{
-										ClientJoin: &chatterbox.Response_Join{
-											Topic: topic,
-											Nick: clientID,
-										},
-									},
-								}
-							}(join.Topic, clientID, ch)
-
-							wg.Wait()
-						}
-						s.topicsMu.RUnlock()
-						break
 					case req.GetClientPart() != nil:
 						break
 					case req.GetClientPing() != nil:
@@ -156,6 +120,82 @@ func (s *server) Stream(stream chatterbox.Chatterbox_StreamServer) error {
 				}
 		}
 	}
+}
+
+func (s *server) onClientJoin(req *chatterbox.Request, nickname string) error {
+	join := req.GetClientJoin()
+	if len(join.Topic) == 0 {
+		// TODO return proper gRPC error
+		return nil
+	}
+
+	// add client to topic
+	s.topicsMu.Lock()
+	if _, ok := s.Topics[join.Topic]; !ok {
+		// the requested topic does not exist, so create it.
+		s.Topics[join.Topic] = make(map[string]struct{})
+	}
+	// the topic exists add the client to the list of joined clients for the topic
+	s.Topics[join.Topic][nickname] = struct{}{}
+	s.topicsMu.Unlock()
+
+	// create a slice of all of the nicks subscribed to the topic so that they can be notified of the new subscription
+	s.topicsMu.RLock()
+	var clients []string
+	for client := range s.Topics[join.Topic] {
+		if client == nickname {
+			continue
+		}
+		clients = append(clients, client)
+	}
+	s.topicsMu.RUnlock()
+
+	s.broadcastToClients(clients, &chatterbox.Response{
+		Event: &chatterbox.Response_ClientJoin{
+			ClientJoin: &chatterbox.Response_Join{
+				Topic: join.Topic,
+				Nick:  nickname,
+			}}})
+
+	return nil
+}
+
+func (s *server) broadcastToClients(clients []string, resp *chatterbox.Response) {
+	var wg sync.WaitGroup
+
+	// loop over the clients to notify in chunks so that we don't spin up an unbounded number of goroutines.
+	length := len(clients)
+	var n int
+	for i := 0; i < length-1; i += s.broadcastChunkSize {
+		n = min(i+s.broadcastChunkSize, length)
+
+		for _, client := range clients[i:n] {
+			// grab the broadcasting channel for the client, if it doesn't exist skip it.
+			// it may not exist by the time we get here if the client sent a part/quit event.
+			s.clientsMu.RLock()
+			ch, ok := s.Clients[client]
+			if !ok {
+				continue
+			}
+			s.clientsMu.RUnlock()
+
+			// create a response pump that sends out the response.
+			wg.Add(1)
+			go func(ch chan *chatterbox.Response, resp *chatterbox.Response) {
+				defer wg.Done()
+				ch <-resp
+			}(ch, resp)
+		}
+
+		wg.Wait()
+	}
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 // TODO make sure all clients join the server topic by default
