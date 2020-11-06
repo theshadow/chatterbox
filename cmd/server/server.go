@@ -10,7 +10,7 @@ import (
 
 	"github.com/golang/protobuf/ptypes/timestamp"
 
-	"chatterbox"
+	"github.com/theshadow/chatterbox"
 )
 
 type server struct {

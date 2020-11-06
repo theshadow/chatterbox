@@ -10,7 +10,7 @@ import (
 
 	"google.golang.org/grpc"
 
-	"chatterbox"
+	"github.com/theshadow/chatterbox"
 )
 
 func main() {

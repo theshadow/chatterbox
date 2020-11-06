@@ -13,7 +13,7 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
-	"chatterbox"
+	"github.com/theshadow/chatterbox"
 )
 
 type client struct {
