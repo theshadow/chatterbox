@@ -23,7 +23,8 @@ message Request {
   }
 
   message Message {
-    string text = 1;
+    string topic = 1;
+    string text = 2;
   }
 
   message Part {
@@ -39,12 +40,10 @@ message Response {
   google.protobuf.Timestamp timestamp = 1;
 
   oneof event {
-    Login client_login = 2;
-    Logout client_logout = 3;
-    Message client_message = 4;
-    Join client_join = 5;
-    Part client_part = 6;
-    Pong client_pong = 7;
+    Message client_message = 2;
+    Join client_join = 3;
+    Part client_part = 4;
+    Pong client_pong = 5;
   }
 
   message Join {

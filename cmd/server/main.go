@@ -9,17 +9,24 @@ import (
 	"chatterbox"
 )
 
+var (
+	Version string
+	BuildRef string
+)
 
 func main() {
-
 	conn, err := net.Listen("tcp", ":50051")
 	if err != nil {
 		log.Fatalf("unable to listen on :50051: %v", err)
 	}
 
-	s := grpc.NewServer()
-	chatterbox.RegisterChatServerServer(s, NewServer())
-	if err := s.Serve(conn); err != nil {
-		log.Fatalf("unable to serve: %v", err)
+	grpcSvc := grpc.NewServer()
+	if svc, err := NewServer(); err != nil {
+		log.Fatalf("unable to instantiate gRPC service: %s", err)
+	} else {
+		chatterbox.RegisterChatterboxServer(grpcSvc, svc)
+		if err := grpcSvc.Serve(conn); err != nil {
+			log.Fatalf("unable to serve: %v", err)
+		}
 	}
 }
